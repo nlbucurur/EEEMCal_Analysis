@@ -1,0 +1,20 @@
+GlobalAnalog:
+    Rf = 8
+    idac_inv = 7
+    idac_tot = 7
+    gain_conv = 0
+    Cd = 5
+    En_hyst_tot = 0
+    En_hyst_toa = 1
+    dac_hyst_toa = 31
+
+VoltageReference:
+    Vbg_1v = 4
+    Refi = 1
+    Inv_vref  = 650 10100010 10 
+    Noinv_vref = 850 11010100 10
+    Toa_vref = 250   111110 10
+    Tot_vref = 600   10010110 00
+
+asic1 ch3 = ch80
+    gain_conv = 4
