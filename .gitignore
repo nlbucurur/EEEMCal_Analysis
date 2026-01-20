@@ -1,3 +1,21 @@
 *.root
 *.csv
 *.jpg
+
+# Entornos virtuales
+venv/
+.venv/
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Carpetas de build
+build/
+dist/
+*.egg-info/
+
+# Configs locales
+.env
