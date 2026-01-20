@@ -85,13 +85,22 @@ for csv_file in csv_files:
     # Histogram (Amplitude)
     # --------------------------------------------------
     hname  = f"h_amp_{voltage_tag}"
-    htitle = f"Amplitude Histogram ({voltage_label});Amplitude (mV);Counts"
+    htitle = f"Amplitude Histogram ({voltage_label});Amplitude (V);Counts"
 
     h = ROOT.TH1D(hname, htitle, len(x), arr.data())
 
     for i, c in enumerate(y, start=1):
         h.SetBinContent(i, c)
         h.SetBinError(i, math.sqrt(c) if c >= 0 else 0.0)
+    
+    # peak_bin = h.GetMaximumBin()
+    # peak_amp = h.GetBinCenter(peak_bin)
+    
+    # low_edge  = 0.8 * peak_amp
+    # high_edge = 1.2 * peak_amp
+    
+    # bin_low  = h.FindBin(low_edge)
+    # bin_high = h.FindBin(high_edge)
 
     # --------------------------------------------------
     # Compute resolution = RMS/Mean
@@ -99,11 +108,33 @@ for csv_file in csv_files:
     mean = h.GetMean()
     rms  = h.GetRMS()
     resolution = (rms / mean) if mean != 0 else 0.0
+    
+    # sumw = 0.0
+    # sumwx = 0.0
+    # sumwx2 = 0.0
+    
+    # for b in range(bin_low, bin_high + 1):
+    #     w = h.GetBinContent(b)
+    #     xval = h.GetBinCenter(b)
+    #     sumw += w
+    #     sumwx += w * xval
+    #     sumwx2 += w * xval * xval
+
+    # if sumw > 0:
+    #     mean = sumwx / sumw
+    #     var = (sumwx2 / sumw) - mean * mean
+    #     rms = math.sqrt(var) if var > 0 else 0.0
+    # else:
+    #     mean = 0.0
+    #     rms = 0.0
+
+    # resolution = (rms / mean) if mean != 0 else 0.0
 
     # --------------------------------------------------
     # Draw and save
     # --------------------------------------------------
     c1 = ROOT.TCanvas("c1", "c1", 900, 600)
+    c1.SetLogy()
     h.SetLineWidth(2)
     h.Draw("HIST")
 
@@ -115,9 +146,10 @@ for csv_file in csv_files:
     pt.SetTextSize(0.035)
 
     pt.AddText(f"V = {voltage_label}")
-    pt.AddText(f"Mean = {mean:.2f} mV")
-    pt.AddText(f"RMS  = {rms:.2f} mV")
+    pt.AddText(f"Mean = {mean * 1e3:.2f} mV")
+    pt.AddText(f"RMS  = {rms * 1e3:.2f} mV")
     pt.AddText(f"Res = {resolution*100:.2f} %")
+    # pt.AddText(f"Window: [{low_edge:.1f}, {high_edge:.1f}] mV")
     pt.Draw()
 
     # out_pdf = os.path.join(OUT_DIR, f"hist_amplitude_{voltage_tag}.pdf")

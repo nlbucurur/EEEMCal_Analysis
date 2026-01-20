@@ -7,15 +7,18 @@ import re
 # --------------------------------------------------
 # Paths
 # --------------------------------------------------
-BASE_DIR = "/mnt/d/Documents/PhD/EEEMCal_Analysis/Test_LED_Analysis/Res_area"
-DATA_DIR = os.path.join(BASE_DIR, "data")
-OUT_DIR  = os.path.join(BASE_DIR, "images", "areaHist")
+BASE_DIR = "/mnt/d/Documents/PhD/EEEMCal_Analysis/Test_LED_Analysis"
+
+AREA_DATA_DIR = os.path.join(BASE_DIR, "Res_area", "data")
+AMP_DATA_DIR  = os.path.join(BASE_DIR, "Res_amplitude", "data")
+
+OUT_DIR = os.path.join(BASE_DIR, "Res_area", "images", "areaHist")
 os.makedirs(OUT_DIR, exist_ok=True)
 
 ROOT.gROOT.SetBatch(True)
 
 # --------------------------------------------------
-# Helpers
+# Functions
 # --------------------------------------------------
 def read_binned_hist_csv(csv_path):
     """Reads CSV with columns: bin_center, counts (header allowed). Returns (x_centers, counts)."""
@@ -72,91 +75,156 @@ def parse_voltage(csv_file):
 # --------------------------------------------------
 # Scan files and compute resolution
 # --------------------------------------------------
-csv_files = sorted([f for f in os.listdir(DATA_DIR) if f.startswith("hist_area_") and f.endswith(".csv")])
-if not csv_files:
-    raise RuntimeError(f"No hist_area_*.csv files found in {DATA_DIR}")
+def compute_resolution_points(data_dir, file_prefix, x_unit_label):
+    """
+    Reads histograms in data_dir matching f"{file_prefix}_*.csv",
+    computes resolution = RMS/Mean (in %), and returns sorted arrays:
+    voltages, resolutions_pct, v_errors, res_errors_pct
+    """
+    
+    csv_files = sorted([f for f in os.listdir(data_dir) if f.startswith(file_prefix) and f.endswith(".csv")])
+    if not csv_files:
+        raise RuntimeError(f"No {file_prefix}*.csv files found in {data_dir}")
 
-voltages = []
-resolutions = []
-v_errors = []
-res_errors = []
+    voltages = []
+    resolutions = []
+    v_errors = []
+    res_errors = []
 
-for csv_file in csv_files:
-    v_val, v_label, v_tag = parse_voltage(csv_file)
-    if v_val is None:
-        print(f"⚠ Skipping (cannot parse voltage): {csv_file}")
-        continue
+    for csv_file in csv_files:
+        v_val, v_label, v_tag = parse_voltage(csv_file)
+        if v_val is None:
+            print(f"⚠ Skipping (cannot parse voltage): {csv_file}")
+            continue
 
-    csv_path = os.path.join(DATA_DIR, csv_file)
-    x, y = read_binned_hist_csv(csv_path)
-    if len(x) < 2:
-        print(f"⚠ Skipping (not enough data): {csv_file}")
-        continue
+        csv_path = os.path.join(data_dir, csv_file)
+        x, y = read_binned_hist_csv(csv_path)
+        if len(x) < 2:
+            print(f"⚠ Skipping (not enough data): {csv_file}")
+            continue
 
-    h = make_th1_from_centers_counts(
-        x, y,
-        hname=f"h_{v_tag}",
-        htitle=f"Area Histogram ({v_label});Area (Wb);Counts"
-    )
-    if not h:
-        print(f"⚠ Skipping (hist build failed): {csv_file}")
-        continue
+        h = make_th1_from_centers_counts(
+            x, y,
+            hname=f"h_{file_prefix}_{v_tag}",
+            htitle=f"{file_prefix} ({v_label});{x_unit_label};Counts"
+        )
+        if not h:
+            print(f"⚠ Skipping (hist build failed): {csv_file}")
+            continue
 
-    mean = h.GetMean()
-    rms  = h.GetRMS()
+        mean = h.GetMean()
+        rms  = h.GetRMS()
 
-    mean_err = h.GetMeanError()
-    rms_err  = h.GetRMSError()
+        mean_err = h.GetMeanError()
+        rms_err  = h.GetRMSError()
 
-    if mean == 0 or math.isnan(mean) or math.isnan(rms):
-        print(f"⚠ Skipping (bad mean/rms): {csv_file}  mean={mean} rms={rms}")
-        continue
+        if mean == 0 or math.isnan(mean) or math.isnan(rms):
+            print(f"⚠ Skipping (bad mean/rms): {csv_file}  mean={mean} rms={rms}")
+            continue
 
-    res = rms / mean
+        res = rms / mean
 
-    # Error propagation for res = rms/mean
-    # res_err/res = sqrt( (rms_err/rms)^2 + (mean_err/mean)^2 )
-    if rms > 0:
-        rel = math.sqrt((rms_err / rms) ** 2 + (mean_err / mean) ** 2) if mean != 0 else 0.0
-        res_err = abs(res) * rel
-    else:
-        res_err = 0.0
+        # Error propagation for res = rms/mean
+        # res_err/res = sqrt( (rms_err/rms)^2 + (mean_err/mean)^2 )
+        if rms > 0:
+            rel = math.sqrt((rms_err / rms) ** 2 + (mean_err / mean) ** 2) if mean != 0 else 0.0
+            res_err = abs(res) * rel
+        else:
+            res_err = 0.0
 
-    voltages.append(v_val)
-    resolutions.append(res * 100.0)      # in %
-    v_errors.append(0.0)                 # no voltage uncertainty provided
-    res_errors.append(res_err * 100.0)   # in %
+        voltages.append(v_val)
+        resolutions.append(res * 100.0)      # in %
+        v_errors.append(0.0)                 # no voltage uncertainty provided
+        res_errors.append(res_err * 100.0)   # in %
 
-    print(f"{csv_file:20s} -> V={v_val:.2f}  mean={mean:.3e} Wb  rms={rms:.3e} Wb  res={res*100:.2f}%")
+        print(f"{csv_file:26s} -> V={v_val:.2f}  mean={mean:.3e}  rms={rms:.3e}  res={res*100:.2f}%")
 
-    del h
+        del h
 
-# Sort by voltage (just in case)
-items = sorted(zip(voltages, resolutions, v_errors, res_errors), key=lambda t: t[0])
-voltages, resolutions, v_errors, res_errors = map(list, zip(*items))
+    # Sort by voltage (just in case)
+    items = sorted(zip(voltages, resolutions, v_errors, res_errors), key=lambda t: t[0])
+    if not items:
+        raise RuntimeError(f"No valid points gound for {file_prefix} in {data_dir}")
+    voltages, resolutions, v_errors, res_errors = map(list, zip(*items))
+    return voltages, resolutions, v_errors, res_errors
 
 # --------------------------------------------------
 # Make TGraphErrors: Resolution (%) vs Voltage (V)
 # --------------------------------------------------
-g = ROOT.TGraphErrors(len(voltages))
-g.SetName("g_res_vs_v")
-g.SetTitle("Resolution vs Voltage;Voltage (V);Resolution (%)")
+def make_graph(name, title, voltages, resolutions, v_errors, res_errors):
+    g = ROOT.TGraphErrors(len(voltages))
+    g.SetName(name)
+    g.SetTitle(title)
+    for i, (v, r, ev, er) in enumerate(zip(voltages, resolutions, v_errors, res_errors)):
+        g.SetPoint(i, v, r)
+        g.SetPointError(i, ev, er)
+    return g
 
-for i, (v, r, ev, er) in enumerate(zip(voltages, resolutions, v_errors, res_errors)):
-    g.SetPoint(i, v, r)
-    g.SetPointError(i, ev, er)
+# --------------------------------------------------
+# Compute curves
+# --------------------------------------------------
+
+vA, rA, evA, erA = compute_resolution_points(
+    data_dir=AREA_DATA_DIR,
+    file_prefix="hist_area_",
+    x_unit_label="Area (Wb)"
+)
+
+vP, rP, evP, erP = compute_resolution_points(
+    data_dir=AMP_DATA_DIR,
+    file_prefix="hist_amplitude_",
+    x_unit_label="Amplitude (mV)"
+)
+
+# --------------------------------------------------
+# Build graphs
+# --------------------------------------------------
+
+gA = make_graph(
+    name="g_res_area",
+    title="Resolution vs Voltage;Voltage (V);Resolution (%)",
+    voltages=vA, resolutions=rA, v_errors=evA, res_errors=erA
+)
+
+gP = make_graph(
+    name="g_res_amp",
+    title="Resolution vs Voltage;Voltage (V);Resolution (%)",
+    voltages=vP, resolutions=rP, v_errors=evP, res_errors=erP
+)
 
 # Style
+# Area (blue)
+gA.SetMarkerStyle(20)
+gA.SetMarkerSize(1.1)
+gA.SetLineWidth(2)
+gA.SetMarkerColor(ROOT.kBlue + 1)
+gA.SetLineColor(ROOT.kBlue + 1)
+
+# Amplitude (red)
+gP.SetMarkerStyle(21)
+gP.SetMarkerSize(1.1)
+gP.SetLineWidth(2)
+gP.SetMarkerColor(ROOT.kRed + 1)
+gP.SetLineColor(ROOT.kRed + 1)
+
 c = ROOT.TCanvas("c_res", "c_res", 900, 600)
-g.SetMarkerStyle(20)
-g.SetMarkerSize(1.1)
-g.SetLineWidth(2)
+gA.Draw("AP")
 
-g.Draw("AP")
+ymax = max(max(rA), max(rP))
+gA.GetYaxis().SetRangeUser(0.0, ymax * 1.1)
 
+gP.Draw("P SAME")
 # Optional: simple linear fit (comment out if you do not want it)
 # fit = ROOT.TF1("fit", "pol1", min(voltages), max(voltages))
 # g.Fit(fit, "Q")  # Q = quiet
+
+# Legend
+leg = ROOT.TLegend(0.25, 0.75, 0.50, 0.88)
+leg.SetBorderSize(1)
+leg.SetFillColor(0)
+leg.AddEntry(gA, "From Area Histogram (Wb)", "p")
+leg.AddEntry(gP, "From Amplitude Histogram (mV)", "p")
+leg.Draw()
 
 # Add a small info box
 pt = ROOT.TPaveText(0.76, 0.78, 0.98, 0.88, "NDC")
@@ -164,13 +232,13 @@ pt.SetFillColor(0)
 pt.SetBorderSize(1)
 pt.SetTextSize(0.035)
 pt.AddText(r"Resolution = \sigma / \mu")
-pt.AddText("Area unit: Wb")
 pt.Draw()
 
 # Save
-out_pdf = os.path.join(OUT_DIR, "resolution_vs_voltage.pdf")
-out_png = os.path.join(OUT_DIR, "resolution_vs_voltage.png")
-c.SaveAs(out_pdf)
+# out_pdf = os.path.join(OUT_DIR, "resolution_vs_voltage_area_and_amplitude.pdf")
+out_png = os.path.join(OUT_DIR, "resolution_vs_voltage_area_and_amplitude.png")
+# c.SaveAs(out_pdf)
 c.SaveAs(out_png)
 
-print(f"\n✅ Saved:\n  {out_pdf}\n  {out_png}")
+# print(f"\n✅ Saved:\n  {out_pdf}\n  {out_png}")
+print(f"\n✅ Saved:\n  {out_png}")
