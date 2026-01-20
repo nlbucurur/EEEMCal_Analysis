@@ -93,42 +93,46 @@ for csv_file in csv_files:
         h.SetBinContent(i, c)
         h.SetBinError(i, math.sqrt(c) if c >= 0 else 0.0)
     
-    # peak_bin = h.GetMaximumBin()
-    # peak_amp = h.GetBinCenter(peak_bin)
+    peak_bin = h.GetMaximumBin()
+    peak_amp = h.GetBinCenter(peak_bin)
     
-    # low_edge  = 0.8 * peak_amp
-    # high_edge = 1.2 * peak_amp
+    low_edge  = 0.8 * peak_amp
+    high_edge = 1.2 * peak_amp
     
-    # bin_low  = h.FindBin(low_edge)
-    # bin_high = h.FindBin(high_edge)
+    bin_low  = h.FindBin(low_edge)
+    bin_high = h.FindBin(high_edge)
 
-    # --------------------------------------------------
-    # Compute resolution = RMS/Mean
-    # --------------------------------------------------
-    mean = h.GetMean()
-    rms  = h.GetRMS()
-    resolution = (rms / mean) if mean != 0 else 0.0
-    
-    # sumw = 0.0
-    # sumwx = 0.0
-    # sumwx2 = 0.0
-    
-    # for b in range(bin_low, bin_high + 1):
-    #     w = h.GetBinContent(b)
-    #     xval = h.GetBinCenter(b)
-    #     sumw += w
-    #     sumwx += w * xval
-    #     sumwx2 += w * xval * xval
-
-    # if sumw > 0:
-    #     mean = sumwx / sumw
-    #     var = (sumwx2 / sumw) - mean * mean
-    #     rms = math.sqrt(var) if var > 0 else 0.0
-    # else:
-    #     mean = 0.0
-    #     rms = 0.0
-
+    # # --------------------------------------------------
+    # # Compute resolution = RMS/Mean
+    # # --------------------------------------------------
+    # mean = h.GetMean()
+    # rms  = h.GetRMS()
     # resolution = (rms / mean) if mean != 0 else 0.0
+    
+    # --------------------------------------------------
+    # Compute mean/RMS in the selected window only
+    # --------------------------------------------------
+    
+    sumw = 0.0  # Total weight (sum of counts)
+    sumwx = 0.0 # Sum of (count × bin_center)
+    sumwx2 = 0.0 # Sum of (count × bin_center²)
+    
+    for b in range(bin_low, bin_high + 1):
+        w = h.GetBinContent(b)
+        xval = h.GetBinCenter(b)
+        sumw += w
+        sumwx += w * xval
+        sumwx2 += w * xval * xval
+
+    if sumw > 0:
+        mean = sumwx / sumw
+        var = (sumwx2 / sumw) - mean * mean
+        rms = math.sqrt(var) if var > 0 else 0.0
+    else:
+        mean = 0.0
+        rms = 0.0
+
+    resolution = (rms / mean) if mean != 0 else 0.0
 
     # --------------------------------------------------
     # Draw and save
@@ -151,9 +155,17 @@ for csv_file in csv_files:
     pt.AddText(f"Res = {resolution*100:.2f} %")
     # pt.AddText(f"Window: [{low_edge:.1f}, {high_edge:.1f}] mV")
     pt.Draw()
+    
+    l1 = ROOT.TLine(low_edge, 0.8, low_edge, h.GetMaximum())
+    l2 = ROOT.TLine(high_edge, 0.8, high_edge, h.GetMaximum())
+    l1.SetLineStyle(2); l2.SetLineStyle(2)
+    l1.SetLineWidth(2); l2.SetLineWidth(2)
+    l1.SetLineColorAlpha(ROOT.kOrange + 1, 0.9)
+    l2.SetLineColorAlpha(ROOT.kOrange + 1, 0.9)
+    l1.Draw("SAME"); l2.Draw("SAME")
 
     # out_pdf = os.path.join(OUT_DIR, f"hist_amplitude_{voltage_tag}.pdf")
-    out_png = os.path.join(OUT_DIR, f"hist_amplitude_{voltage_tag}.png")
+    out_png = os.path.join(OUT_DIR, f"hist_amplitude_{voltage_tag}_window.png")
 
     # c1.SaveAs(out_pdf)
     c1.SaveAs(out_png)
