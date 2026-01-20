@@ -4,7 +4,7 @@ import math
 import os
 import re
 
-BASE_DIR = "/mnt/d/Documents/PhD/EEEMCal_Analysis/Test_LED_Analysis"
+BASE_DIR = "/mnt/d/Documents/PhD/EEEMCal_Analysis/Test_LED_Analysis/Res_area"
 DATA_DIR = os.path.join(BASE_DIR, "data")
 OUT_DIR  = os.path.join(BASE_DIR, "images", "areaHist")
 
