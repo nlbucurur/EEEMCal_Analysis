@@ -4,6 +4,9 @@ import math
 import os
 import re
 
+ROOT.gROOT.SetBatch(True)      # no pop-up canvases
+# ROOT.gStyle.SetOptStat(0)     # remove stats box (Mean/RMS box)
+
 # --------------------------------------------------
 # Paths (EDIT ONLY THESE if needed)
 # --------------------------------------------------
@@ -101,13 +104,6 @@ for csv_file in csv_files:
     
     bin_low  = h.FindBin(low_edge)
     bin_high = h.FindBin(high_edge)
-
-    # # --------------------------------------------------
-    # # Compute resolution = RMS/Mean
-    # # --------------------------------------------------
-    # mean = h.GetMean()
-    # rms  = h.GetRMS()
-    # resolution = (rms / mean) if mean != 0 else 0.0
     
     # --------------------------------------------------
     # Compute mean/RMS in the selected window only
@@ -135,24 +131,133 @@ for csv_file in csv_files:
     resolution = (rms / mean) if mean != 0 else 0.0
 
     # --------------------------------------------------
+    # Crystal Ball fit (fit on a normalized clone)
+    # --------------------------------------------------
+    
+    # # Better initial sigma guess: use your window RMS
+    # sigma0 = max(rms, 1e-6)
+    # # TF1: [0] = N (norm), [1]=alpha, [2]=n, [3]=mean, [4]=sigma
+    
+    # Make a clone to fit as a PDF (unit area)
+    h_fit = h.Clone(f"{h.GetName()}_fit")
+    h_fit.SetDirectory(0)
+    
+    I = h_fit.Integral("width")
+    if I > 0:
+        h_fit.Scale(1.0 / I)
+    
+    fname = f"cb_{voltage_tag}"
+    if ROOT.gROOT.FindObject(fname):
+        ROOT.gROOT.FindObject(fname).Delete()
+
+    # cb = ROOT.TF1(
+    #     fname,
+    #     "crystalball",
+    #     low_edge,
+    #     high_edge
+    # )
+    
+    # Fit function: built-in TF1 "crystalball" has 4 params: alpha, n, mean, sigma
+    cb = ROOT.TF1(fname, "crystalball", low_edge, high_edge)
+    
+    # Better initial sigma guess: use your window RMS (fallback if rms==0)
+    sigma0 = rms if rms > 0 else 0.02 * peak_amp
+    
+    # Initial parameters (VERY important for convergence)
+    cb.SetParameters(
+        1.5,        # alpha
+        3.0,        # n
+        peak_amp,   # mean
+        sigma0      # sigma
+    )
+    
+    # Parameter limits (stabilizes the fit)
+    cb.SetParLimits(0, 0.2, 5.0)                  # alpha
+    cb.SetParLimits(1, 1.0, 50.0)                 # n
+    cb.SetParLimits(2, low_edge, high_edge)       # mean
+    cb.SetParLimits(3, 0.1*sigma0, 10.0*sigma0)   # sigma
+    
+    # Perform fit
+    fit_res = h_fit.Fit(cb, "RQS")  # R=range, Q=quiet, S=store result, 0=no draw
+    status = int(fit_res)
+
+    if status != 0:
+        print(f"⚠ Fit failed for {csv_file} (status={status}) -> using window RMS/Mean")
+        mean_fit = mean
+        sigma_fit = rms
+    else:
+        mean_fit  = cb.GetParameter(2)
+        sigma_fit = cb.GetParameter(3)
+
+    resolution_fit = sigma_fit / mean_fit if mean_fit != 0 else 0.0
+    
+
+    # # --------------------------------------------------
+    # # Compute resolution = RMS/Mean
+    # # --------------------------------------------------
+    # mean = h.GetMean()
+    # rms  = h.GetRMS()
+    # resolution = (rms / mean) if mean != 0 else 0.0
+    
+    # --------------------------------------------------
+    # Build a scaled curve to overlay on the ORIGINAL histogram (counts)
+    # Scale by matching the peak height
+    # --------------------------------------------------
+    cb.SetNpx(800)
+    
+    # If fit succeeded, scale the PDF curve to the histogram counts for display
+    if status == 0:
+        y_cb_at_peak = cb.Eval(mean_fit)
+        scale = (h.GetMaximum() / y_cb_at_peak) if y_cb_at_peak > 0 else 1.0
+
+        xs = ROOT.std.vector('double')()
+        ys = ROOT.std.vector('double')()
+
+        npts = 400
+        for i in range(npts):
+            xx = low_edge + (high_edge - low_edge) * i / (npts - 1)
+            xs.push_back(xx)
+            ys.push_back(scale * cb.Eval(xx))
+
+        g_cb = ROOT.TGraph(npts, xs.data(), ys.data())
+        g_cb.SetLineColor(ROOT.kRed + 2)
+        g_cb.SetLineWidth(2)
+    else:
+        g_cb = None
+
+    del h_fit
+    
+
+    # --------------------------------------------------
     # Draw and save
     # --------------------------------------------------
-    c1 = ROOT.TCanvas("c1", "c1", 900, 600)
+    c1 = ROOT.TCanvas(f"c_{voltage_tag}", f"c_{voltage_tag}", 900, 600)
     c1.SetLogy()
     h.SetLineWidth(2)
     h.Draw("HIST")
+    
+    # # Draw fit on histogram
+    # if status == 0:
+    #     cb.SetLineColor(ROOT.kRed + 2)
+    #     cb.SetLineWidth(2)
+    #     cb.Draw("SAME")
+    
+    # Draw scaled fit curve (only if fit succeeded)
+    if g_cb:
+        g_cb.Draw("L SAME")
 
     # Text box
     pt = ROOT.TPaveText(0.78, 0.56, 0.98, 0.72, "NDC")
     pt.SetFillColor(0)
     pt.SetBorderSize(1)
     pt.SetTextAlign(12)
-    pt.SetTextSize(0.035)
+    pt.SetTextSize(0.025)
 
+    # pt.AddText("Crystal Ball fit")
     pt.AddText(f"V = {voltage_label}")
-    pt.AddText(f"Mean = {mean * 1e3:.2f} mV")
-    pt.AddText(f"RMS  = {rms * 1e3:.2f} mV")
-    pt.AddText(f"Res = {resolution*100:.2f} %")
+    pt.AddText(f"Mean = {mean_fit * 1e3:.2f} mV")
+    pt.AddText(f"Sigma = {sigma_fit * 1e3:.2f} mV")
+    pt.AddText(f"Res = {resolution_fit*100:.2f} %")
     # pt.AddText(f"Window: [{low_edge:.1f}, {high_edge:.1f}] mV")
     pt.Draw()
     
@@ -163,6 +268,15 @@ for csv_file in csv_files:
     l1.SetLineColorAlpha(ROOT.kOrange + 1, 0.9)
     l2.SetLineColorAlpha(ROOT.kOrange + 1, 0.9)
     l1.Draw("SAME"); l2.Draw("SAME")
+    
+    # Legend
+    if g_cb:
+        leg = ROOT.TLegend(0.15, 0.75, 0.45, 0.88)
+        leg.SetBorderSize(1)
+        leg.SetFillStyle(0)
+        leg.AddEntry(h, "Amplitude histogram", "l")
+        leg.AddEntry(g_cb, "Crystal Ball fit", "l")
+        leg.Draw()
 
     # out_pdf = os.path.join(OUT_DIR, f"hist_amplitude_{voltage_tag}.pdf")
     out_png = os.path.join(OUT_DIR, f"hist_amplitude_{voltage_tag}_window.png")
