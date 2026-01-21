@@ -131,22 +131,14 @@ for csv_file in csv_files:
     resolution = (rms / mean) if mean != 0 else 0.0
 
     # --------------------------------------------------
-    # Crystal Ball fit (fit on a normalized clone)
+    # Gaussian fit in selected window (fit on a normalized clone)
     # --------------------------------------------------
     
     # # Better initial sigma guess: use your window RMS
     # sigma0 = max(rms, 1e-6)
     # # TF1: [0] = N (norm), [1]=alpha, [2]=n, [3]=mean, [4]=sigma
     
-    # Make a clone to fit as a PDF (unit area)
-    h_fit = h.Clone(f"{h.GetName()}_fit")
-    h_fit.SetDirectory(0)
-    
-    I = h_fit.Integral("width")
-    if I > 0:
-        h_fit.Scale(1.0 / I)
-    
-    fname = f"cb_{voltage_tag}"
+    fname = f"gauss_{voltage_tag}"
     if ROOT.gROOT.FindObject(fname):
         ROOT.gROOT.FindObject(fname).Delete()
 
@@ -156,29 +148,21 @@ for csv_file in csv_files:
     #     low_edge,
     #     high_edge
     # )
-    
-    # Fit function: built-in TF1 "crystalball" has 4 params: alpha, n, mean, sigma
-    cb = ROOT.TF1(fname, "crystalball", low_edge, high_edge)
+
+    # Fit function: built-in TF1 "gaus" has 3 params: mean, sigma, norm
+    gaus = ROOT.TF1(fname, "gaus", low_edge, high_edge)
     
     # Better initial sigma guess: use your window RMS (fallback if rms==0)
+    # gaus params are: [0]=amplitude, [1]=mean, [2]=sigma
     sigma0 = rms if rms > 0 else 0.02 * peak_amp
-    
-    # Initial parameters (VERY important for convergence)
-    cb.SetParameters(
-        1.5,        # alpha
-        3.0,        # n
-        peak_amp,   # mean
-        sigma0      # sigma
-    )
+    gaus.SetParameters(h.GetMaximum(), peak_amp, sigma0)
     
     # Parameter limits (stabilizes the fit)
-    cb.SetParLimits(0, 0.2, 5.0)                  # alpha
-    cb.SetParLimits(1, 1.0, 50.0)                 # n
-    cb.SetParLimits(2, low_edge, high_edge)       # mean
-    cb.SetParLimits(3, 0.1*sigma0, 10.0*sigma0)   # sigma
-    
+    gaus.SetParLimits(1, low_edge, high_edge)       # mean
+    gaus.SetParLimits(2, 0.1*sigma0, 10.0*sigma0)   # sigma
+
     # Perform fit
-    fit_res = h_fit.Fit(cb, "RQS")  # R=range, Q=quiet, S=store result, 0=no draw
+    fit_res = h.Fit(gaus, "RQS")  # R=range, Q=quiet, S=store result, 0=no draw
     status = int(fit_res)
 
     if status != 0:
@@ -186,9 +170,9 @@ for csv_file in csv_files:
         mean_fit = mean
         sigma_fit = rms
     else:
-        mean_fit  = cb.GetParameter(2)
-        sigma_fit = cb.GetParameter(3)
-
+        mean_fit  = gaus.GetParameter(1)
+        sigma_fit = gaus.GetParameter(2)
+        
     resolution_fit = sigma_fit / mean_fit if mean_fit != 0 else 0.0
     
 
@@ -199,34 +183,6 @@ for csv_file in csv_files:
     # rms  = h.GetRMS()
     # resolution = (rms / mean) if mean != 0 else 0.0
     
-    # --------------------------------------------------
-    # Build a scaled curve to overlay on the ORIGINAL histogram (counts)
-    # Scale by matching the peak height
-    # --------------------------------------------------
-    cb.SetNpx(800)
-    
-    # If fit succeeded, scale the PDF curve to the histogram counts for display
-    if status == 0:
-        y_cb_at_peak = cb.Eval(mean_fit)
-        scale = (h.GetMaximum() / y_cb_at_peak) if y_cb_at_peak > 0 else 1.0
-
-        xs = ROOT.std.vector('double')()
-        ys = ROOT.std.vector('double')()
-
-        npts = 400
-        for i in range(npts):
-            xx = low_edge + (high_edge - low_edge) * i / (npts - 1)
-            xs.push_back(xx)
-            ys.push_back(scale * cb.Eval(xx))
-
-        g_cb = ROOT.TGraph(npts, xs.data(), ys.data())
-        g_cb.SetLineColor(ROOT.kRed + 2)
-        g_cb.SetLineWidth(2)
-    else:
-        g_cb = None
-
-    del h_fit
-    
 
     # --------------------------------------------------
     # Draw and save
@@ -236,15 +192,11 @@ for csv_file in csv_files:
     h.SetLineWidth(2)
     h.Draw("HIST")
     
-    # # Draw fit on histogram
-    # if status == 0:
-    #     cb.SetLineColor(ROOT.kRed + 2)
-    #     cb.SetLineWidth(2)
-    #     cb.Draw("SAME")
-    
     # Draw scaled fit curve (only if fit succeeded)
-    if g_cb:
-        g_cb.Draw("L SAME")
+    if status == 0:
+        gaus.SetLineColor(ROOT.kRed + 2)
+        gaus.SetLineWidth(2)
+        gaus.Draw("L SAME")
 
     # Text box
     pt = ROOT.TPaveText(0.78, 0.56, 0.98, 0.72, "NDC")
@@ -255,9 +207,9 @@ for csv_file in csv_files:
 
     # pt.AddText("Crystal Ball fit")
     pt.AddText(f"V = {voltage_label}")
-    pt.AddText(f"Mean = {mean_fit * 1e3:.2f} mV")
-    pt.AddText(f"Sigma = {sigma_fit * 1e3:.2f} mV")
-    pt.AddText(f"Res = {resolution_fit*100:.2f} %")
+    pt.AddText(f"Mean (fit) = {mean_fit * 1e3:.2f} mV")
+    pt.AddText(f"Sigma (fit) = {sigma_fit * 1e3:.2f} mV")
+    pt.AddText(f"Res (fit) = {resolution_fit*100:.2f} %")
     # pt.AddText(f"Window: [{low_edge:.1f}, {high_edge:.1f}] mV")
     pt.Draw()
     
@@ -270,16 +222,16 @@ for csv_file in csv_files:
     l1.Draw("SAME"); l2.Draw("SAME")
     
     # Legend
-    if g_cb:
+    if status == 0:
         leg = ROOT.TLegend(0.15, 0.75, 0.45, 0.88)
         leg.SetBorderSize(1)
         leg.SetFillStyle(0)
         leg.AddEntry(h, "Amplitude histogram", "l")
-        leg.AddEntry(g_cb, "Crystal Ball fit", "l")
+        leg.AddEntry(gaus, "Gaussian fit", "l")
         leg.Draw()
 
     # out_pdf = os.path.join(OUT_DIR, f"hist_amplitude_{voltage_tag}.pdf")
-    out_png = os.path.join(OUT_DIR, f"hist_amplitude_{voltage_tag}_window.png")
+    out_png = os.path.join(OUT_DIR, f"hist_amplitude_{voltage_tag}_gauss_window.png")
 
     # c1.SaveAs(out_pdf)
     c1.SaveAs(out_png)
