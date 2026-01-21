@@ -75,13 +75,25 @@ def parse_voltage(csv_file):
 # --------------------------------------------------
 # Scan files and compute resolution
 # --------------------------------------------------
-def compute_resolution_points(data_dir, file_prefix, x_unit_label):
+def compute_resolution_points(
+    data_dir,
+    file_prefix,
+    x_unit_label,
+    use_peak_window=False,
+    window_factors=(0.8, 1.2),
+):
     """
-    Reads histograms in data_dir matching f"{file_prefix}_*.csv",
+    Reads histograms in data_dir matching f"{file_prefix}*.csv",
     computes resolution = RMS/Mean (in %), and returns sorted arrays:
     voltages, resolutions_pct, v_errors, res_errors_pct
+
+    If use_peak_window=True:
+      - Find peak bin center (peak_x)
+      - Define window [window_factors[0]*peak_x, window_factors[1]*peak_x]
+      - Compute mean/rms using only bins in that window (weighted by counts)
+      - Estimate errors using simple counting-stat approximations
     """
-    
+
     csv_files = sorted([f for f in os.listdir(data_dir) if f.startswith(file_prefix) and f.endswith(".csv")])
     if not csv_files:
         raise RuntimeError(f"No {file_prefix}*.csv files found in {data_dir}")
@@ -112,34 +124,91 @@ def compute_resolution_points(data_dir, file_prefix, x_unit_label):
             print(f"⚠ Skipping (hist build failed): {csv_file}")
             continue
 
-        mean = h.GetMean()
-        rms  = h.GetRMS()
+        # -----------------------------
+        # Compute mean/rms (full or windowed)
+        # -----------------------------
+        if not use_peak_window:
+            mean = h.GetMean()
+            rms  = h.GetRMS()
 
-        mean_err = h.GetMeanError()
-        rms_err  = h.GetRMSError()
+            mean_err = h.GetMeanError()
+            rms_err  = h.GetRMSError()
+
+            window_info = "full"
+        else:
+            # Peak-based window
+            peak_bin = h.GetMaximumBin()
+            peak_x   = h.GetBinCenter(peak_bin)
+
+            low_edge  = window_factors[0] * peak_x
+            high_edge = window_factors[1] * peak_x
+
+            bin_low  = h.FindBin(low_edge)
+            bin_high = h.FindBin(high_edge)
+
+            # Weighted moments in window
+            sumw = 0.0
+            sumwx = 0.0
+            sumwx2 = 0.0
+
+            for b in range(bin_low, bin_high + 1):
+                w = h.GetBinContent(b)
+                xv = h.GetBinCenter(b)
+                sumw += w
+                sumwx += w * xv
+                sumwx2 += w * xv * xv
+
+            if sumw <= 0:
+                print(f"⚠ Skipping (empty window): {csv_file}")
+                del h
+                continue
+
+            mean = sumwx / sumw
+            var = (sumwx2 / sumw) - mean * mean
+            rms = math.sqrt(var) if var > 0 else 0.0
+
+            # --- Simple error estimates (counting-stat approximations) ---
+            # Treat sumw as N (counts). Then:
+            #   mean_err ~ rms / sqrt(N)
+            #   rms_err  ~ rms / sqrt(2N)
+            # (These are approximations; good enough for comparing trends.)
+            N = sumw
+            mean_err = (rms / math.sqrt(N)) if N > 0 else 0.0
+            rms_err  = (rms / math.sqrt(2.0 * N)) if N > 0 else 0.0
+
+            window_info = f"window [{low_edge:.3g}, {high_edge:.3g}]"
 
         if mean == 0 or math.isnan(mean) or math.isnan(rms):
             print(f"⚠ Skipping (bad mean/rms): {csv_file}  mean={mean} rms={rms}")
+            del h
             continue
 
         res = rms / mean
 
         # Error propagation for res = rms/mean
-        # res_err/res = sqrt( (rms_err/rms)^2 + (mean_err/mean)^2 )
-        if rms > 0:
-            rel = math.sqrt((rms_err / rms) ** 2 + (mean_err / mean) ** 2) if mean != 0 else 0.0
+        if rms > 0 and mean != 0:
+            rel = math.sqrt((rms_err / rms) ** 2 + (mean_err / mean) ** 2)
             res_err = abs(res) * rel
         else:
             res_err = 0.0
 
         voltages.append(v_val)
         resolutions.append(res * 100.0)      # in %
-        v_errors.append(0.0)                 # no voltage uncertainty provided
+        v_errors.append(0.0)                 # no voltage uncertainty
         res_errors.append(res_err * 100.0)   # in %
 
-        print(f"{csv_file:26s} -> V={v_val:.2f}  mean={mean:.3e}  rms={rms:.3e}  res={res*100:.2f}%")
+        print(
+            f"{csv_file:26s} -> V={v_val:.2f}  "
+            f"mean={mean:.3e}  rms={rms:.3e}  res={res*100:.2f}%   ({window_info})"
+        )
 
         del h
+
+    items = sorted(zip(voltages, resolutions, v_errors, res_errors), key=lambda t: t[0])
+    if not items:
+        raise RuntimeError(f"No valid points found for {file_prefix} in {data_dir}")
+    voltages, resolutions, v_errors, res_errors = map(list, zip(*items))
+    return voltages, resolutions, v_errors, res_errors
 
     # Sort by voltage (just in case)
     items = sorted(zip(voltages, resolutions, v_errors, res_errors), key=lambda t: t[0])
@@ -167,13 +236,16 @@ def make_graph(name, title, voltages, resolutions, v_errors, res_errors):
 vA, rA, evA, erA = compute_resolution_points(
     data_dir=AREA_DATA_DIR,
     file_prefix="hist_area_",
-    x_unit_label="Area (Wb)"
+    x_unit_label="Area (Wb)",
+    use_peak_window=False
 )
 
 vP, rP, evP, erP = compute_resolution_points(
     data_dir=AMP_DATA_DIR,
     file_prefix="hist_amplitude_",
-    x_unit_label="Amplitude (mV)"
+    x_unit_label="Amplitude (mV)",
+    use_peak_window=True,
+    window_factors=(0.8, 1.2)
 )
 
 # --------------------------------------------------
@@ -219,11 +291,12 @@ gP.Draw("P SAME")
 # g.Fit(fit, "Q")  # Q = quiet
 
 # Legend
-leg = ROOT.TLegend(0.25, 0.75, 0.50, 0.88)
+leg = ROOT.TLegend(0.25, 0.75, 0.65, 0.88)
 leg.SetBorderSize(1)
 leg.SetFillColor(0)
 leg.AddEntry(gA, "From Area Histogram (Wb)", "p")
 leg.AddEntry(gP, "From Amplitude Histogram (mV)", "p")
+leg.SetTextSize(0.035)
 leg.Draw()
 
 # Add a small info box
