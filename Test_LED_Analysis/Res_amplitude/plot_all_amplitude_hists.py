@@ -207,10 +207,15 @@ for csv_file in csv_files:
 
     # pt.AddText("Crystal Ball fit")
     pt.AddText(f"V = {voltage_label}")
-    pt.AddText(f"Mean (fit) = {mean_fit * 1e3:.2f} mV")
-    pt.AddText(f"Sigma (fit) = {sigma_fit * 1e3:.2f} mV")
-    pt.AddText(f"Res (fit) = {resolution_fit*100:.2f} %")
-    # pt.AddText(f"Window: [{low_edge:.1f}, {high_edge:.1f}] mV")
+    if status == 0:
+        pt.AddText(f"Mean (fit) = {mean_fit * 1e3:.2f} mV")
+        pt.AddText(f"Sigma (fit) = {sigma_fit * 1e3:.2f} mV")
+        pt.AddText(f"Res (fit) (#sigma/#mu) = {resolution_fit*100:.2f} %")
+        # pt.AddText(f"Window: [{low_edge:.1f}, {high_edge:.1f}] mV")
+    else:
+        pt.AddText(f"Mean = {mean_fit * 1e3:.2f} mV")
+        pt.AddText(f"Sigma = {sigma_fit * 1e3:.2f} mV")
+        pt.AddText(f"Res (#sigma/#mu) = {resolution_fit*100:.2f} %")
     pt.Draw()
     
     l1 = ROOT.TLine(low_edge, 0.8, low_edge, h.GetMaximum())
@@ -223,12 +228,14 @@ for csv_file in csv_files:
     
     # Legend
     if status == 0:
-        leg = ROOT.TLegend(0.15, 0.75, 0.45, 0.88)
+        leg = ROOT.TLegend(0.15, 0.75, 0.40, 0.88)
         leg.SetBorderSize(1)
         leg.SetFillStyle(0)
+        leg.SetTextSize(0.03)
         leg.AddEntry(h, "Amplitude histogram", "l")
         leg.AddEntry(gaus, "Gaussian fit", "l")
         leg.Draw()
+
 
     # out_pdf = os.path.join(OUT_DIR, f"hist_amplitude_{voltage_tag}.pdf")
     out_png = os.path.join(OUT_DIR, f"hist_amplitude_{voltage_tag}_gauss_window.png")
